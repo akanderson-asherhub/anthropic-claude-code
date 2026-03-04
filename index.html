@@ -1093,20 +1093,20 @@ function detectAudioMime() {
 async function audioStart() {
   dbg(`Page origin: ${window.location.origin}`, 'info');
 
-  // ── Try Web Speech API first (no API key needed, works on Chrome/desktop) ──
+  // ── Path 1: Web Speech API (Chrome/Edge/Android, no keys needed) ──────────
   const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (SpeechRec && !state.forceDeepgram) {
-    dbg('Web Speech API available — trying it first (no Deepgram key needed)', 'info');
+    dbg('Web Speech API available — using it (no Deepgram key needed)', 'info');
     const ok = await audioStartWebSpeech(SpeechRec);
     if (ok) return true;
     dbg('Web Speech API failed — falling back to Deepgram', 'warn');
   }
 
-  // ── Deepgram WebSocket fallback ───────────────────────────────────────────
+  // ── Paths 2 & 3 both need Deepgram key + microphone ──────────────────────
   const dgKey = await getApiKey(LS.DG_KEY);
   if (!dgKey) {
-    dbg('No Deepgram key — run diagnostics or add key in Settings', 'error');
-    showToast('No Deepgram API key. Add it in Settings or use Chrome for Web Speech.');
+    dbg('No Deepgram key found', 'error');
+    showToast('No API key. Add Deepgram key in Settings, or open in Chrome.');
     return false;
   }
   const key = dgKey.trim();
@@ -1124,10 +1124,94 @@ async function audioStart() {
   }
 
   state.audioFormat = detectAudioMime();
-  dbg(`Audio MIME: "${state.audioFormat.mime || 'default'}" → DG encoding: ${state.audioFormat.encoding || 'auto-detect'}`, 'info');
-  state.wsReconnectCount = 0;
-  connectDeepgramWS(key);
+  dbg(`Audio MIME: "${state.audioFormat.mime || 'default'}"`, 'info');
+
+  // ── Path 2: Deepgram WebSocket (real-time, preferred when WS works) ───────
+  // Quick probe: try connecting to a neutral WS endpoint first.
+  // If it fails in <2s with 1006, WebSockets are blocked → skip to HTTP polling.
+  const wsWorks = await probeWebSocket();
+  if (wsWorks) {
+    dbg('WebSocket available — using Deepgram streaming', 'info');
+    state.wsReconnectCount = 0;
+    connectDeepgramWS(key);
+    return true;
+  }
+
+  // ── Path 3: Deepgram HTTP polling (12s chunks, works when WS is blocked) ──
+  dbg('WebSocket blocked — switching to HTTP polling mode (12s chunks)', 'warn');
+  setConnStatus('connected', 'Listening (HTTP)');
+  startHttpPolling(key);
   return true;
+}
+
+// Quick WebSocket probe — resolves true if WS works, false if blocked
+function probeWebSocket() {
+  return new Promise(resolve => {
+    const t = setTimeout(() => { ws.close(); resolve(false); }, 2000);
+    const ws = new WebSocket('wss://echo.websocket.events');
+    ws.onopen  = () => { clearTimeout(t); ws.close(); resolve(true); };
+    ws.onerror = () => {};
+    ws.onclose = (e) => { if (e.code !== 1000) { clearTimeout(t); resolve(false); } };
+  });
+}
+
+// ── Path 3: HTTP polling via Deepgram prerecorded API ─────────────────────────
+// Records 12-second chunks and POSTs them via HTTPS — no WebSocket needed.
+// Deepgram's /v1/listen endpoint has proper CORS headers for browser use.
+function startHttpPolling(key) {
+  const { mime } = state.audioFormat;
+  const options = mime ? { mimeType: mime } : {};
+  const CHUNK_MS = 12000;
+
+  function recordAndTranscribe() {
+    if (!state.micActive) return;
+    const mr = new MediaRecorder(state.audioStream, options);
+    state.mediaRecorder = mr;
+    const chunks = [];
+    mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    mr.onstop = async () => {
+      if (!chunks.length) { if (state.micActive) recordAndTranscribe(); return; }
+      const blob = new Blob(chunks, { type: mime || 'audio/webm' });
+      await transcribeChunk(blob, key, mime);
+      if (state.micActive) recordAndTranscribe(); // chain next chunk
+    };
+    mr.onerror = e => dbg(`MediaRecorder error: ${e.error?.message || e}`, 'error');
+    mr.start();
+    setTimeout(() => { if (mr.state === 'recording') mr.stop(); }, CHUNK_MS);
+    dbg(`Recording chunk (${CHUNK_MS/1000}s)…`, 'info');
+  }
+
+  recordAndTranscribe();
+}
+
+async function transcribeChunk(blob, key, mimeType) {
+  const contentType = mimeType || blob.type || 'audio/webm';
+  dbg(`Sending ${Math.round(blob.size/1024)}KB chunk to Deepgram REST…`, 'info');
+  try {
+    const resp = await fetch(
+      'https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&punctuate=true',
+      {
+        method: 'POST',
+        headers: { 'Authorization': `Token ${key}`, 'Content-Type': contentType },
+        body: blob,
+      }
+    );
+    if (resp.ok) {
+      const data = await resp.json();
+      const text = data.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim();
+      if (text) {
+        dbg(`Transcribed: "${text.slice(0,60)}${text.length>60?'…':''}"`, 'ok');
+        onTranscript(text, true);
+      } else {
+        dbg('Chunk had no speech', 'info');
+      }
+    } else {
+      const body = await resp.text();
+      dbg(`Deepgram REST error ${resp.status}: ${body.slice(0,100)}`, 'error');
+    }
+  } catch (e) {
+    dbg(`HTTP transcription failed: ${e.message}`, 'error');
+  }
 }
 
 // ── Web Speech API path (Chrome, Edge, Android) ───────────────────────────────
