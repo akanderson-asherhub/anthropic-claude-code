@@ -523,7 +523,13 @@
 
     <!-- Guidance Card -->
     <div id="guidance-card" class="idle">
-      <div id="guidance-action" class="guidance-action-idle">Waiting…</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div id="guidance-action" class="guidance-action-idle">Waiting…</div>
+        <button id="pause-btn" onclick="toggleGuidancePause()" title="Hold this screen"
+          style="background:none;border:1px solid #3a3a3a;border-radius:6px;color:#666;font-size:12px;padding:4px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;display:none">
+          ⏸ Hold
+        </button>
+      </div>
       <div id="guidance-reason">Start listening to get coaching.</div>
       <ul id="guidance-points"></ul>
       <div id="guidance-suggestion" style="display:none"></div>
@@ -826,6 +832,7 @@ const state = {
   audioFormat: null,
   speechRec: null,
   forceDeepgram: false,
+  guidancePaused: false,
   _firstMsgLogged: false,
   mediaRecorder: null,
   audioStream: null,
@@ -1491,7 +1498,26 @@ function stopAnalysisLoop() {
 // ════════════════════════════════════════════
 // RENDER FUNCTIONS
 // ════════════════════════════════════════════
+function toggleGuidancePause() {
+  state.guidancePaused = !state.guidancePaused;
+  const btn = document.getElementById('pause-btn');
+  if (state.guidancePaused) {
+    btn.textContent = '▶ Resume';
+    btn.style.borderColor = '#00d4aa';
+    btn.style.color = '#00d4aa';
+    setAnalysisStatus('Paused — tap Resume to update');
+  } else {
+    btn.textContent = '⏸ Hold';
+    btn.style.borderColor = '#3a3a3a';
+    btn.style.color = '#666';
+    // Run analysis immediately so they get a fresh update on resume
+    runAnalysis();
+  }
+}
+
 function renderGuidance(g) {
+  if (state.guidancePaused) return; // don't overwrite while held
+
   const card = document.getElementById('guidance-card');
   const action = document.getElementById('guidance-action');
   const reason = document.getElementById('guidance-reason');
@@ -1604,6 +1630,7 @@ async function toggleMic() {
     document.getElementById('mic-btn').classList.add('active');
     document.getElementById('mic-btn').textContent = '⏹';
     document.getElementById('mic-label').textContent = 'Listening… tap to stop';
+    document.getElementById('pause-btn').style.display = 'block';
   } else {
     stopMeeting();
   }
@@ -1611,6 +1638,7 @@ async function toggleMic() {
 
 function stopMeeting() {
   state.micActive = false;
+  state.guidancePaused = false; // always reset pause on stop
   audioStop();
   stopAnalysisLoop();
   stopMeetingTimer();
@@ -1618,6 +1646,12 @@ function stopMeeting() {
 
   // Final save
   sessionAutosave();
+
+  const pauseBtn = document.getElementById('pause-btn');
+  pauseBtn.style.display = 'none';
+  pauseBtn.textContent = '⏸ Hold';
+  pauseBtn.style.borderColor = '#3a3a3a';
+  pauseBtn.style.color = '#666';
 
   document.getElementById('mic-btn').classList.remove('active');
   document.getElementById('mic-btn').textContent = '🎤';
