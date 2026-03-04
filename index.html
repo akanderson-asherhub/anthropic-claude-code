@@ -946,15 +946,19 @@ async function audioStart() {
 }
 
 function connectDeepgramWS(dgKey) {
-  // Build URL based on actual audio format — never hardcode encoding
-  const params = new URLSearchParams({ interim_results: 'true', smart_format: 'true', punctuate: 'true' });
+  // Auth via URL ?token= param — mirrors "Authorization: Token KEY" from REST API.
+  // Browser WebSockets can't set custom headers, so the token goes in the query string.
+  const params = new URLSearchParams({
+    token:           dgKey,
+    model:           'nova-2',
+    interim_results: 'true',
+    smart_format:    'true',
+    punctuate:       'true',
+  });
   if (state.audioFormat?.encoding) params.set('encoding', state.audioFormat.encoding);
   const url = 'wss://api.deepgram.com/v1/listen?' + params.toString();
 
-  // Auth: API key sent as WebSocket subprotocol.
-  // Browser includes "Sec-WebSocket-Protocol: token, <KEY>" in the HTTP upgrade
-  // request. Deepgram reads that header to identify and authenticate the account.
-  state.wsDeepgram = new WebSocket(url, ['token', dgKey]);
+  state.wsDeepgram = new WebSocket(url);  // no subprotocol needed when token is in URL
   state.wsDeepgram.binaryType = 'arraybuffer';
 
   state.wsDeepgram.onopen = () => {
