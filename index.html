@@ -406,6 +406,38 @@
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+
+    /* ── Debug Panel ── */
+    #debug-panel {
+      background: #0a0a0a;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      margin-top: 10px;
+      overflow: hidden;
+    }
+    #debug-toggle {
+      width: 100%; background: none; border: none; color: #444;
+      font-size: 11px; padding: 8px 12px; text-align: left; cursor: pointer;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #debug-log {
+      display: none;
+      padding: 8px 12px;
+      max-height: 160px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    #debug-log.open { display: block; }
+    .dbg-line {
+      font-size: 11px; font-family: monospace;
+      padding: 2px 0; border-bottom: 1px solid #1a1a1a;
+      word-break: break-all;
+    }
+    .dbg-line:last-child { border-bottom: none; }
+    .dbg-info  { color: #666; }
+    .dbg-ok    { color: #00cc66; }
+    .dbg-warn  { color: #ffaa00; }
+    .dbg-error { color: #ff4444; }
   </style>
 </head>
 <body>
@@ -513,6 +545,14 @@
     <p id="meeting-doc-warning" style="text-align:center;color:#ff4444;font-size:13px;display:none">
       ⚠️ No documents loaded — add guides first
     </p>
+
+    <!-- Debug Panel — tap to expand, shows connection events on-screen -->
+    <div id="debug-panel">
+      <button id="debug-toggle" onclick="toggleDebug()">
+        <span>🔍 Connection log</span><span id="debug-chevron">▸</span>
+      </button>
+      <div id="debug-log"></div>
+    </div>
   </div>
 
   <!-- ══ VIEW: History ══ -->
@@ -639,6 +679,35 @@
 
 <script>
 // ════════════════════════════════════════════
+// DEBUG LOG (on-screen, no dev tools needed)
+// ════════════════════════════════════════════
+const _dbgLines = [];
+function dbg(msg, type = 'info') {
+  const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const line = { ts, msg: String(msg), type };
+  _dbgLines.push(line);
+  if (_dbgLines.length > 60) _dbgLines.shift();
+  // Mirror to real console
+  (type === 'error' ? console.error : type === 'warn' ? console.warn : console.log)(`[DocCoach ${ts}] ${msg}`);
+  // Update on-screen panel if visible
+  const log = document.getElementById('debug-log');
+  if (log) {
+    const el = document.createElement('div');
+    el.className = `dbg-line dbg-${type}`;
+    el.textContent = `${ts}  ${msg}`;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+  }
+}
+function toggleDebug() {
+  const log = document.getElementById('debug-log');
+  const chev = document.getElementById('debug-chevron');
+  const open = log.classList.toggle('open');
+  chev.textContent = open ? '▾' : '▸';
+  if (open) log.scrollTop = log.scrollHeight;
+}
+
+// ════════════════════════════════════════════
 // CONSTANTS & STATE
 // ════════════════════════════════════════════
 const LS = {
@@ -661,6 +730,7 @@ const state = {
   wsDeepgram: null,
   wsKeepalive: null,
   audioFormat: null,
+  _firstMsgLogged: false,
   mediaRecorder: null,
   audioStream: null,
   transcript: '',        // accumulated final transcript
@@ -877,6 +947,7 @@ function sessionStart() {
   state.currentSessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
   state.transcript = '';
   state.recentChunks = [];
+  state._firstMsgLogged = false;
 }
 function sessionAutosave() {
   if (!state.currentSessionId || !state.transcript) return;
@@ -927,9 +998,12 @@ async function audioStart() {
   const dgKey = await getApiKey(LS.DG_KEY);
   if (!dgKey) { showToast('Missing Deepgram API key'); return false; }
 
+  dbg('Requesting microphone…', 'info');
   try {
     state.audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    dbg('Microphone granted ✓', 'ok');
   } catch (e) {
+    dbg(`Mic error: ${e.name} — ${e.message}`, 'error');
     if (e.name === 'NotAllowedError') {
       showMicDenied();
     } else {
@@ -940,6 +1014,7 @@ async function audioStart() {
 
   // Detect MIME type before opening WebSocket so URL params match actual audio format
   state.audioFormat = detectAudioMime();
+  dbg(`Audio format: mime="${state.audioFormat.mime || 'default'}" encoding=${state.audioFormat.encoding || 'auto'}`, 'info');
   state.wsReconnectCount = 0;
   connectDeepgramWS(dgKey);
   return true;
@@ -958,18 +1033,35 @@ function connectDeepgramWS(dgKey) {
   if (state.audioFormat?.encoding) params.set('encoding', state.audioFormat.encoding);
   const url = 'wss://api.deepgram.com/v1/listen?' + params.toString();
 
+  // Log URL without token for debugging
+  const safeUrl = url.replace(/token=[^&]+/, 'token=***');
+  dbg(`WS connecting: ${safeUrl}`, 'info');
+
   state.wsDeepgram = new WebSocket(url);  // no subprotocol needed when token is in URL
   state.wsDeepgram.binaryType = 'arraybuffer';
 
   state.wsDeepgram.onopen = () => {
+    dbg('WS opened OK ✓', 'ok');
     setConnStatus('connected', 'Listening');
     startMediaRecorder();
     startWsKeepalive(); // prevent idle timeout
   };
 
   state.wsDeepgram.onmessage = (evt) => {
+    // Log first message to confirm data flow
+    if (typeof evt.data === 'string' && !state._firstMsgLogged) {
+      state._firstMsgLogged = true;
+      try {
+        const d = JSON.parse(evt.data);
+        // Deepgram sends metadata as first message
+        if (d.type === 'Metadata') dbg(`DG metadata: request_id=${d.request_id?.slice(0,8)}`, 'ok');
+        else if (d.error) dbg(`DG error msg: ${d.error}`, 'error');
+      } catch {}
+    }
     try {
       const data = JSON.parse(evt.data);
+      // Surface any error messages from Deepgram
+      if (data.error) { dbg(`DG error: ${data.error} (${data.reason || ''})`, 'error'); return; }
       const alt = data?.channel?.alternatives?.[0];
       if (!alt) return;
       const text = alt.transcript || '';
@@ -979,20 +1071,31 @@ function connectDeepgramWS(dgKey) {
   };
 
   state.wsDeepgram.onerror = (e) => {
-    console.error('Deepgram WS error', e);
+    dbg('WS error event fired (check onclose for code)', 'error');
     setConnStatus('error', 'Connection error');
   };
 
   state.wsDeepgram.onclose = (evt) => {
     stopWsKeepalive();
-    console.log('Deepgram WS closed', evt.code, evt.reason);
+    const codeMap = {
+      1000: 'Normal close', 1001: 'Going away', 1002: 'Protocol error',
+      1003: 'Unsupported data', 1005: 'No status', 1006: 'Abnormal (network?)',
+      1007: 'Invalid data', 1008: 'Policy violation (auth?)', 1009: 'Too large',
+      1011: 'Server error', 1015: 'TLS failure',
+    };
+    const meaning = codeMap[evt.code] || 'Unknown';
+    dbg(`WS closed: code=${evt.code} (${meaning}) reason="${evt.reason || 'none'}"`,
+        evt.code === 1000 ? 'info' : 'error');
+    setConnStatus('error', `Closed: ${evt.code} ${meaning}`);
+
     if (state.micActive && state.wsReconnectCount < 3) {
       state.wsReconnectCount++;
+      dbg(`Reconnect attempt ${state.wsReconnectCount}/3…`, 'warn');
       setConnStatus('error', `Reconnecting (${state.wsReconnectCount}/3)…`);
       setTimeout(() => connectDeepgramWS(dgKey), 2000 * state.wsReconnectCount);
     } else if (state.micActive) {
       setConnStatus('error', 'Connection lost');
-      showToast('Lost connection to Deepgram — check network');
+      showToast('Lost connection to Deepgram — open log for details');
     }
   };
 }
@@ -1019,8 +1122,9 @@ function startMediaRecorder() {
       state.wsDeepgram.send(e.data);
     }
   };
-  state.mediaRecorder.onerror = (e) => { console.error('MediaRecorder error', e); showToast('Audio recording error'); };
+  state.mediaRecorder.onerror = (e) => { dbg(`MediaRecorder error: ${e.error?.message || e}`, 'error'); showToast('Audio recording error'); };
   state.mediaRecorder.start(250); // 250ms chunks
+  dbg(`MediaRecorder started (${state.mediaRecorder.mimeType || 'default mime'})`, 'ok');
 }
 
 function onTranscript(text, isFinal) {
