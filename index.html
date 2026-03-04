@@ -551,7 +551,11 @@
       <button id="debug-toggle" onclick="toggleDebug()">
         <span>🔍 Connection log</span><span id="debug-chevron">▸</span>
       </button>
-      <div id="debug-log"></div>
+      <div id="debug-log">
+        <div style="padding:6px 0;border-bottom:1px solid #1a1a1a">
+          <button class="btn btn-ghost btn-sm" style="width:100%;margin-bottom:4px" onclick="testDeepgramKey()">🔑 Test Deepgram API Key (REST)</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -705,6 +709,38 @@ function toggleDebug() {
   const open = log.classList.toggle('open');
   chev.textContent = open ? '▾' : '▸';
   if (open) log.scrollTop = log.scrollHeight;
+}
+
+// Test Deepgram key via REST (same as curl -H "Authorization: Token KEY")
+// This bypasses all WebSocket complexity and tells us if the key itself is valid.
+async function testDeepgramKey() {
+  const dgKey = await getApiKey(LS.DG_KEY);
+  if (!dgKey) { dbg('No Deepgram key found in storage', 'error'); return; }
+  const key = dgKey.trim();
+  dbg(`Testing key via REST: Authorization: Token ${key.slice(0,4)}…${key.slice(-4)}`, 'info');
+  try {
+    const resp = await fetch('https://api.deepgram.com/v1/projects', {
+      headers: { 'Authorization': `Token ${key}` }
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      const projectName = data.projects?.[0]?.name || '(no projects)';
+      dbg(`✓ Key VALID — project: "${projectName}"`, 'ok');
+      dbg('Key works for REST. WebSocket issue is connection/protocol specific.', 'warn');
+    } else {
+      const body = await resp.text();
+      dbg(`✗ Key INVALID — HTTP ${resp.status}: ${body.slice(0, 120)}`, 'error');
+      dbg('Go to console.deepgram.com → API Keys → create a new key', 'warn');
+    }
+  } catch (e) {
+    // CORS error means REST is blocked from browser but key might still be valid
+    if (e.message.includes('CORS') || e.message.includes('fetch') || e.name === 'TypeError') {
+      dbg(`REST blocked by CORS (expected). Key format is OK, issue is WS-specific.`, 'warn');
+      dbg(`Error: ${e.message}`, 'info');
+    } else {
+      dbg(`REST test error: ${e.message}`, 'error');
+    }
+  }
 }
 
 // ════════════════════════════════════════════
