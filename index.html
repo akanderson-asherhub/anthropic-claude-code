@@ -995,8 +995,17 @@ function detectAudioMime() {
 }
 
 async function audioStart() {
+  dbg(`Page origin: ${window.location.origin}`, 'info');
+
   const dgKey = await getApiKey(LS.DG_KEY);
-  if (!dgKey) { showToast('Missing Deepgram API key'); return false; }
+  if (!dgKey) {
+    dbg('CRITICAL: getApiKey returned null — key missing or decrypt failed', 'error');
+    showToast('Missing Deepgram API key — check Settings');
+    return false;
+  }
+  // Trim whitespace that may have been copied with the key
+  const key = dgKey.trim();
+  dbg(`Deepgram key retrieved: ${key.length} chars, starts "${key.slice(0,4)}…"`, 'info');
 
   dbg('Requesting microphone…', 'info');
   try {
@@ -1012,19 +1021,19 @@ async function audioStart() {
     return false;
   }
 
-  // Detect MIME type before opening WebSocket so URL params match actual audio format
   state.audioFormat = detectAudioMime();
-  dbg(`Audio format: mime="${state.audioFormat.mime || 'default'}" encoding=${state.audioFormat.encoding || 'auto'}`, 'info');
+  dbg(`Audio MIME: "${state.audioFormat.mime || 'default'}" → DG encoding: ${state.audioFormat.encoding || 'auto-detect'}`, 'info');
   state.wsReconnectCount = 0;
-  connectDeepgramWS(dgKey);
+  connectDeepgramWS(key);  // pass trimmed key
   return true;
 }
 
 function connectDeepgramWS(dgKey) {
-  // Auth via URL ?token= param — mirrors "Authorization: Token KEY" from REST API.
-  // Browser WebSockets can't set custom headers, so the token goes in the query string.
+  // Auth via WebSocket subprotocol — Deepgram's documented browser auth method.
+  // The browser sends: "Sec-WebSocket-Protocol: token, <API_KEY>" in the HTTP upgrade.
+  // Deepgram reads that header and uses the value after "token, " as the API key.
+  // (This is separate from query params — the key does NOT go in the URL.)
   const params = new URLSearchParams({
-    token:           dgKey,
     model:           'nova-2',
     interim_results: 'true',
     smart_format:    'true',
@@ -1033,11 +1042,10 @@ function connectDeepgramWS(dgKey) {
   if (state.audioFormat?.encoding) params.set('encoding', state.audioFormat.encoding);
   const url = 'wss://api.deepgram.com/v1/listen?' + params.toString();
 
-  // Log URL without token for debugging
-  const safeUrl = url.replace(/token=[^&]+/, 'token=***');
-  dbg(`WS connecting: ${safeUrl}`, 'info');
+  dbg(`WS connecting (subprotocol auth): ${url}`, 'info');
 
-  state.wsDeepgram = new WebSocket(url);  // no subprotocol needed when token is in URL
+  // Pass key as subprotocol: ['token', apiKey]
+  state.wsDeepgram = new WebSocket(url, ['token', dgKey]);
   state.wsDeepgram.binaryType = 'arraybuffer';
 
   state.wsDeepgram.onopen = () => {
