@@ -659,6 +659,8 @@ const state = {
   // meeting
   micActive: false,
   wsDeepgram: null,
+  wsKeepalive: null,
+  audioFormat: null,
   mediaRecorder: null,
   audioStream: null,
   transcript: '',        // accumulated final transcript
@@ -907,6 +909,20 @@ function sessionExport(id) {
 // ════════════════════════════════════════════
 // AUDIO / DEEPGRAM MODULE
 // ════════════════════════════════════════════
+// Detect best supported MIME type and map to Deepgram encoding param
+function detectAudioMime() {
+  const formats = [
+    { mime: 'audio/webm;codecs=opus', encoding: 'webm-opus' },
+    { mime: 'audio/webm',             encoding: 'webm-opus' },
+    { mime: 'audio/ogg;codecs=opus',  encoding: 'ogg-opus'  },
+    { mime: 'audio/ogg',              encoding: 'ogg-opus'  },
+    // iOS Safari produces mp4/aac — omit encoding so Deepgram auto-detects
+    { mime: 'audio/mp4',              encoding: null        },
+    { mime: '',                        encoding: null        }, // browser default
+  ];
+  return formats.find(f => !f.mime || MediaRecorder.isTypeSupported(f.mime)) || formats[formats.length - 1];
+}
+
 async function audioStart() {
   const dgKey = await getApiKey(LS.DG_KEY);
   if (!dgKey) { showToast('Missing Deepgram API key'); return false; }
@@ -922,19 +938,29 @@ async function audioStart() {
     return false;
   }
 
+  // Detect MIME type before opening WebSocket so URL params match actual audio format
+  state.audioFormat = detectAudioMime();
   state.wsReconnectCount = 0;
   connectDeepgramWS(dgKey);
   return true;
 }
 
 function connectDeepgramWS(dgKey) {
-  const url = 'wss://api.deepgram.com/v1/listen?encoding=webm-opus&interim_results=true&smart_format=true&punctuate=true';
+  // Build URL based on actual audio format — never hardcode encoding
+  const params = new URLSearchParams({ interim_results: 'true', smart_format: 'true', punctuate: 'true' });
+  if (state.audioFormat?.encoding) params.set('encoding', state.audioFormat.encoding);
+  const url = 'wss://api.deepgram.com/v1/listen?' + params.toString();
+
+  // Auth: API key sent as WebSocket subprotocol.
+  // Browser includes "Sec-WebSocket-Protocol: token, <KEY>" in the HTTP upgrade
+  // request. Deepgram reads that header to identify and authenticate the account.
   state.wsDeepgram = new WebSocket(url, ['token', dgKey]);
   state.wsDeepgram.binaryType = 'arraybuffer';
 
   state.wsDeepgram.onopen = () => {
     setConnStatus('connected', 'Listening');
     startMediaRecorder();
+    startWsKeepalive(); // prevent idle timeout
   };
 
   state.wsDeepgram.onmessage = (evt) => {
@@ -948,9 +974,14 @@ function connectDeepgramWS(dgKey) {
     } catch {}
   };
 
-  state.wsDeepgram.onerror = () => setConnStatus('error', 'Connection error');
+  state.wsDeepgram.onerror = (e) => {
+    console.error('Deepgram WS error', e);
+    setConnStatus('error', 'Connection error');
+  };
 
-  state.wsDeepgram.onclose = () => {
+  state.wsDeepgram.onclose = (evt) => {
+    stopWsKeepalive();
+    console.log('Deepgram WS closed', evt.code, evt.reason);
     if (state.micActive && state.wsReconnectCount < 3) {
       state.wsReconnectCount++;
       setConnStatus('error', `Reconnecting (${state.wsReconnectCount}/3)…`);
@@ -962,18 +993,30 @@ function connectDeepgramWS(dgKey) {
   };
 }
 
+// Send a keepalive every 8s so Deepgram doesn't close the idle connection
+function startWsKeepalive() {
+  stopWsKeepalive();
+  state.wsKeepalive = setInterval(() => {
+    if (state.wsDeepgram?.readyState === WebSocket.OPEN) {
+      state.wsDeepgram.send(JSON.stringify({ type: 'KeepAlive' }));
+    }
+  }, 8000);
+}
+function stopWsKeepalive() {
+  if (state.wsKeepalive) { clearInterval(state.wsKeepalive); state.wsKeepalive = null; }
+}
+
 function startMediaRecorder() {
-  const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg']
-    .find(m => MediaRecorder.isTypeSupported(m)) || '';
-  const options = mimeType ? { mimeType } : {};
+  const { mime } = state.audioFormat;
+  const options = mime ? { mimeType: mime } : {};
   state.mediaRecorder = new MediaRecorder(state.audioStream, options);
   state.mediaRecorder.ondataavailable = (e) => {
     if (e.data.size > 0 && state.wsDeepgram?.readyState === WebSocket.OPEN) {
       state.wsDeepgram.send(e.data);
     }
   };
-  state.mediaRecorder.onerror = () => { showToast('Audio recording error'); };
-  state.mediaRecorder.start(250); // send chunks every 250ms
+  state.mediaRecorder.onerror = (e) => { console.error('MediaRecorder error', e); showToast('Audio recording error'); };
+  state.mediaRecorder.start(250); // 250ms chunks
 }
 
 function onTranscript(text, isFinal) {
@@ -990,6 +1033,7 @@ function onTranscript(text, isFinal) {
 }
 
 function audioStop() {
+  stopWsKeepalive();
   if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
     state.mediaRecorder.stop();
   }
