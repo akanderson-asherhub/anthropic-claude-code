@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0f0f0f">
+  <title>DocCoach</title>
+
+  <!-- CDN Libraries for file parsing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <style>
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f0f;
+      color: #e8e8e8;
+      font-size: 16px;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    /* ── App Shell ── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: -webkit-fill-available;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    /* ── Views ── */
+    .view {
+      display: none;
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 20px 16px 80px;
+    }
+    .view.active { display: flex; flex-direction: column; }
+
+    /* ── Bottom Nav ── */
+    #bottom-nav {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      max-width: 600px;
+      margin: 0 auto;
+      background: #1a1a1a;
+      border-top: 1px solid #2a2a2a;
+      height: 60px;
+      z-index: 100;
+    }
+    #bottom-nav.visible { display: flex; }
+    .nav-items { display: flex; width: 100%; }
+    .nav-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 10px;
+      cursor: pointer;
+      padding: 6px 4px;
+      transition: color 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .nav-btn .icon { font-size: 20px; }
+    .nav-btn.active { color: #00d4aa; }
+
+    /* ── Typography ── */
+    h1 { font-size: 26px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+    h2 { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 16px; }
+    h3 { font-size: 16px; font-weight: 600; color: #ccc; margin-bottom: 10px; }
+    p  { color: #aaa; line-height: 1.5; }
+    small { font-size: 12px; color: #666; }
+
+    /* ── Cards ── */
+    .card {
+      background: #1a1a1a;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border: 1px solid #2a2a2a;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: opacity 0.15s, transform 0.1s;
+      width: 100%;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: #00d4aa; color: #000; }
+    .btn-danger  { background: #ff4444; color: #fff; }
+    .btn-ghost   { background: #2a2a2a; color: #e8e8e8; }
+    .btn-sm { padding: 7px 12px; font-size: 13px; width: auto; border-radius: 8px; }
+
+    /* ── Inputs ── */
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 13px; color: #888; margin-bottom: 6px; }
+    .field input,
+    .field textarea,
+    .field select {
+      width: 100%;
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      color: #e8e8e8;
+      font-size: 15px;
+      padding: 11px 12px;
+      outline: none;
+      -webkit-appearance: none;
+      font-family: inherit;
+    }
+    .field textarea { resize: vertical; min-height: 100px; }
+    .field input:focus,
+    .field textarea:focus { border-color: #00d4aa; }
+    .field input[type="file"] { display: none; }
+
+    /* ── Logo / Branding ── */
+    .logo-wrap { text-align: center; padding: 40px 0 30px; }
+    .logo-icon { font-size: 52px; margin-bottom: 8px; }
+    .logo-subtitle { color: #666; font-size: 14px; }
+
+    /* ── Setup / Login View ── */
+    #view-setup, #view-login {
+      justify-content: center;
+      padding-bottom: 20px;
+    }
+
+    /* ── Guidance Card ── */
+    #guidance-card {
+      border-radius: 14px;
+      padding: 18px;
+      margin-bottom: 14px;
+      transition: background 0.4s, border-color 0.4s;
+      border: 2px solid transparent;
+    }
+    #guidance-card.quiet {
+      background: rgba(255, 68, 68, 0.12);
+      border-color: rgba(255, 68, 68, 0.4);
+    }
+    #guidance-card.speak {
+      background: rgba(0, 204, 102, 0.12);
+      border-color: rgba(0, 204, 102, 0.4);
+    }
+    #guidance-card.idle {
+      background: #1a1a1a;
+      border-color: #2a2a2a;
+    }
+    #guidance-action {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .guidance-action-quiet { color: #ff4444; }
+    .guidance-action-speak { color: #00cc66; }
+    .guidance-action-idle  { color: #666; }
+    #guidance-reason { font-size: 14px; color: #bbb; margin-bottom: 10px; }
+    #guidance-points { list-style: none; padding: 0; }
+    #guidance-points li {
+      font-size: 14px;
+      color: #e8e8e8;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      padding-left: 16px;
+      position: relative;
+    }
+    #guidance-points li::before {
+      content: '▸';
+      position: absolute; left: 0;
+      color: #00d4aa;
+    }
+    #guidance-points li:last-child { border-bottom: none; }
+    #guidance-suggestion {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #888;
+      font-style: italic;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.04);
+      border-radius: 6px;
+    }
+    #analysis-status {
+      font-size: 11px;
+      color: #555;
+      text-align: right;
+      margin-top: 6px;
+    }
+
+    /* ── Mic Button ── */
+    #mic-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 0;
+    }
+    #mic-btn {
+      width: 90px; height: 90px;
+      border-radius: 50%;
+      border: none;
+      background: #2a2a2a;
+      color: #888;
+      font-size: 36px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #mic-btn.active {
+      background: #ff4444;
+      color: #fff;
+      box-shadow: 0 0 0 8px rgba(255,68,68,0.15), 0 0 0 16px rgba(255,68,68,0.07);
+      animation: mic-pulse 2s ease-in-out infinite;
+    }
+    @keyframes mic-pulse {
+      0%, 100% { box-shadow: 0 0 0 8px rgba(255,68,68,0.15), 0 0 0 16px rgba(255,68,68,0.07); }
+      50%        { box-shadow: 0 0 0 12px rgba(255,68,68,0.20), 0 0 0 22px rgba(255,68,68,0.05); }
+    }
+    #mic-label { font-size: 13px; color: #666; }
+
+    /* ── Transcript ── */
+    #transcript-wrap {
+      background: #1a1a1a;
+      border-radius: 12px;
+      border: 1px solid #2a2a2a;
+      padding: 12px;
+      max-height: 180px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      margin-bottom: 14px;
+    }
+    #transcript-text {
+      font-size: 13px;
+      color: #888;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    #transcript-interim { color: #555; font-style: italic; }
+    .transcript-label { font-size: 11px; color: #444; margin-bottom: 6px; }
+
+    /* ── Status Pill ── */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: #2a2a2a;
+      color: #666;
+    }
+    .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: #444; }
+    .status-pill.connected .dot { background: #00cc66; }
+    .status-pill.error .dot { background: #ff4444; }
+    .status-pill.analyzing .dot { background: #00d4aa; animation: blink 1s ease infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    /* ── Meeting Header ── */
+    #meeting-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    #meeting-timer { font-size: 18px; font-weight: 700; color: #00d4aa; font-variant-numeric: tabular-nums; }
+    #interval-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #555; }
+    #interval-wrap select { width: auto; padding: 4px 8px; font-size: 12px; }
+
+    /* ── Documents List ── */
+    .doc-item {
+      display: flex; align-items: center; gap: 10px;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 8px;
+    }
+    .doc-icon { font-size: 22px; flex-shrink: 0; }
+    .doc-info { flex: 1; min-width: 0; }
+    .doc-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .doc-meta { font-size: 11px; color: #555; margin-top: 2px; }
+    .doc-del { background: none; border: none; color: #555; font-size: 18px; cursor: pointer; padding: 4px; -webkit-tap-highlight-color: transparent; flex-shrink: 0; }
+    .doc-del:hover, .doc-del:active { color: #ff4444; }
+    #no-docs-msg { text-align: center; padding: 30px; color: #444; font-size: 14px; }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 200;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: #1a1a1a;
+      border-radius: 20px 20px 0 0;
+      padding: 20px 16px 40px;
+      width: 100%;
+      max-width: 600px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .modal-handle {
+      width: 36px; height: 4px;
+      background: #333; border-radius: 2px;
+      margin: 0 auto 16px;
+    }
+    .modal h2 { margin-bottom: 16px; }
+
+    /* ── File Upload Button ── */
+    .upload-btn {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      border: 2px dashed #3a3a3a;
+      border-radius: 10px;
+      padding: 20px;
+      cursor: pointer;
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 14px;
+      -webkit-tap-highlight-color: transparent;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .upload-btn:active, .upload-btn.hover { border-color: #00d4aa; color: #00d4aa; }
+    .upload-btn .icon { font-size: 24px; }
+
+    /* ── History View ── */
+    .session-item {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 8px;
+    }
+    .session-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+    .session-date { font-size: 14px; font-weight: 600; }
+    .session-actions { display: flex; gap: 8px; }
+    .session-meta { font-size: 12px; color: #555; }
+
+    /* ── Toast ── */
+    #toast {
+      display: none;
+      position: fixed;
+      bottom: 80px; left: 50%; transform: translateX(-50%);
+      background: #333; color: #e8e8e8;
+      padding: 10px 20px; border-radius: 30px;
+      font-size: 13px; z-index: 300;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    /* ── Spinner ── */
+    .spinner {
+      display: inline-block; width: 18px; height: 18px;
+      border: 2px solid #3a3a3a; border-top-color: #00d4aa;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Divider ── */
+    .or-divider {
+      display: flex; align-items: center; gap: 10px;
+      color: #444; font-size: 12px; margin: 14px 0;
+    }
+    .or-divider::before, .or-divider::after {
+      content: ''; flex: 1; height: 1px; background: #2a2a2a;
+    }
+
+    /* ── Settings in Setup ── */
+    .settings-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 0; border-bottom: 1px solid #2a2a2a;
+    }
+    .settings-row:last-child { border-bottom: none; }
+    .settings-label { font-size: 14px; color: #ccc; }
+    .settings-sublabel { font-size: 11px; color: #555; margin-top: 2px; }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ══ VIEW: Setup (first run) ══ -->
+  <div id="view-setup" class="view">
+    <div class="logo-wrap">
+      <div class="logo-icon">🎙️</div>
+      <h1>DocCoach</h1>
+      <p class="logo-subtitle">Your real-time meeting assistant</p>
+    </div>
+    <div class="card">
+      <h3>First-time setup</h3>
+      <p style="margin-bottom:16px">Set a password and enter your API keys. These are stored encrypted on this device only.</p>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="setup-password" placeholder="Choose a password" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label>Deepgram API Key <a href="https://console.deepgram.com" target="_blank" style="color:#00d4aa;font-size:11px">Get free key ↗</a></label>
+        <input type="password" id="setup-deepgram" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>Anthropic API Key <a href="https://console.anthropic.com" target="_blank" style="color:#00d4aa;font-size:11px">Get key ↗</a></label>
+        <input type="password" id="setup-anthropic" placeholder="sk-ant-..." autocomplete="off">
+      </div>
+      <button class="btn btn-primary" id="setup-btn" onclick="handleSetup()">Get Started</button>
+      <p id="setup-error" style="color:#ff4444;font-size:13px;margin-top:10px;display:none"></p>
+    </div>
+  </div>
+
+  <!-- ══ VIEW: Login ══ -->
+  <div id="view-login" class="view">
+    <div class="logo-wrap">
+      <div class="logo-icon">🎙️</div>
+      <h1>DocCoach</h1>
+      <p class="logo-subtitle">Meeting assistant</p>
+    </div>
+    <div class="card">
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password"
+               onkeydown="if(event.key==='Enter') handleLogin()">
+      </div>
+      <button class="btn btn-primary" onclick="handleLogin()">Unlock</button>
+      <p id="login-error" style="color:#ff4444;font-size:13px;margin-top:10px;display:none">Incorrect password</p>
+    </div>
+    <p style="text-align:center;margin-top:16px">
+      <a href="#" onclick="showResetConfirm()" style="color:#444;font-size:12px">Reset app (erase all data)</a>
+    </p>
+  </div>
+
+  <!-- ══ VIEW: Documents ══ -->
+  <div id="view-documents" class="view">
+    <h2>Documents</h2>
+    <button class="btn btn-primary" style="margin-bottom:16px" onclick="openAddDocModal()">＋ Add Document</button>
+    <div id="docs-list"></div>
+    <div id="no-docs-msg" style="display:none">
+      <div style="font-size:36px;margin-bottom:10px">📁</div>
+      <p>No documents yet.<br>Add guides to enable meeting mode.</p>
+    </div>
+  </div>
+
+  <!-- ══ VIEW: Meeting ══ -->
+  <div id="view-meeting" class="view">
+    <div id="meeting-header">
+      <div>
+        <div id="meeting-timer">00:00</div>
+        <div id="conn-status" class="status-pill"><span class="dot"></span>Ready</div>
+      </div>
+      <div id="interval-wrap">
+        <span>Analyze every</span>
+        <select id="interval-select" onchange="updateInterval()">
+          <option value="5">5s</option>
+          <option value="10" selected>10s</option>
+          <option value="15">15s</option>
+          <option value="20">20s</option>
+          <option value="30">30s</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Guidance Card -->
+    <div id="guidance-card" class="idle">
+      <div id="guidance-action" class="guidance-action-idle">Waiting…</div>
+      <div id="guidance-reason">Start listening to get coaching.</div>
+      <ul id="guidance-points"></ul>
+      <div id="guidance-suggestion" style="display:none"></div>
+      <div id="analysis-status"></div>
+    </div>
+
+    <!-- Transcript -->
+    <div class="transcript-label">Live Transcript</div>
+    <div id="transcript-wrap">
+      <span id="transcript-text"></span><span id="transcript-interim"></span>
+    </div>
+
+    <!-- Mic -->
+    <div id="mic-wrap">
+      <button id="mic-btn" onclick="toggleMic()">🎤</button>
+      <div id="mic-label">Tap to listen</div>
+    </div>
+
+    <p id="meeting-doc-warning" style="text-align:center;color:#ff4444;font-size:13px;display:none">
+      ⚠️ No documents loaded — add guides first
+    </p>
+  </div>
+
+  <!-- ══ VIEW: History ══ -->
+  <div id="view-history" class="view">
+    <h2>Transcripts</h2>
+    <div id="sessions-list"></div>
+    <div id="no-sessions-msg" style="text-align:center;padding:30px;color:#444;font-size:14px;display:none">
+      <div style="font-size:36px;margin-bottom:10px">📝</div>
+      <p>No saved sessions yet.</p>
+    </div>
+  </div>
+
+  <!-- ══ Bottom Nav ══ -->
+  <nav id="bottom-nav">
+    <div class="nav-items">
+      <button class="nav-btn" id="nav-docs" onclick="navigate('documents')">
+        <span class="icon">📁</span><span>Docs</span>
+      </button>
+      <button class="nav-btn" id="nav-meeting" onclick="navigate('meeting')">
+        <span class="icon">🎙️</span><span>Meeting</span>
+      </button>
+      <button class="nav-btn" id="nav-history" onclick="navigate('history')">
+        <span class="icon">📝</span><span>History</span>
+      </button>
+      <button class="nav-btn" id="nav-settings" onclick="openSettings()">
+        <span class="icon">⚙️</span><span>Settings</span>
+      </button>
+    </div>
+  </nav>
+
+</div><!-- #app -->
+
+<!-- ══ Modal: Add Document ══ -->
+<div class="modal-overlay" id="add-doc-modal" onclick="handleModalClick(event)">
+  <div class="modal" id="add-doc-modal-inner">
+    <div class="modal-handle"></div>
+    <h2>Add Document</h2>
+    <div class="field">
+      <label>Document Name</label>
+      <input type="text" id="add-doc-name" placeholder="e.g. Incentive Alignment Guide">
+    </div>
+    <label class="upload-btn" for="file-input" id="upload-label">
+      <span class="icon">📎</span>
+      <span id="upload-label-text">Tap to upload PDF, DOCX, PPTX, XLSX, MD, TXT</span>
+    </label>
+    <input type="file" id="file-input" accept=".pdf,.docx,.pptx,.xlsx,.md,.txt,text/*"
+           onchange="handleFileSelect(this)">
+    <div class="or-divider">or paste text</div>
+    <div class="field">
+      <textarea id="add-doc-text" placeholder="Paste document content here…"></textarea>
+    </div>
+    <button class="btn btn-primary" id="save-doc-btn" onclick="saveDocument()">Save Document</button>
+    <button class="btn btn-ghost" style="margin-top:8px" onclick="closeAddDocModal()">Cancel</button>
+    <p id="add-doc-error" style="color:#ff4444;font-size:13px;margin-top:10px;display:none"></p>
+  </div>
+</div>
+
+<!-- ══ Modal: Settings ══ -->
+<div class="modal-overlay" id="settings-modal" onclick="handleSettingsModalClick(event)">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h2>Settings</h2>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">Change Password</div>
+        <div class="settings-sublabel">Requires re-entering API keys</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeSettings();showResetConfirm()">Reset</button>
+    </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">Update API Keys</div>
+        <div class="settings-sublabel">Deepgram &amp; Anthropic</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeSettings();showUpdateKeys()">Edit</button>
+    </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">Clear All Transcripts</div>
+        <div class="settings-sublabel">Removes session history</div>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="clearSessions()">Clear</button>
+    </div>
+    <button class="btn btn-ghost" style="margin-top:16px" onclick="closeSettings()">Done</button>
+  </div>
+</div>
+
+<!-- ══ Modal: Update Keys ══ -->
+<div class="modal-overlay" id="update-keys-modal" onclick="handleUpdateKeysClick(event)">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h2>Update API Keys</h2>
+    <div class="field">
+      <label>Current Password</label>
+      <input type="password" id="uk-password" placeholder="Enter your password">
+    </div>
+    <div class="field">
+      <label>Deepgram API Key</label>
+      <input type="password" id="uk-deepgram" placeholder="Leave blank to keep current">
+    </div>
+    <div class="field">
+      <label>Anthropic API Key</label>
+      <input type="password" id="uk-anthropic" placeholder="Leave blank to keep current">
+    </div>
+    <button class="btn btn-primary" onclick="saveUpdatedKeys()">Save Keys</button>
+    <button class="btn btn-ghost" style="margin-top:8px" onclick="closeUpdateKeys()">Cancel</button>
+    <p id="uk-error" style="color:#ff4444;font-size:13px;margin-top:10px;display:none"></p>
+  </div>
+</div>
+
+<!-- ══ Modal: Session saved ══ -->
+<div class="modal-overlay" id="session-saved-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h2>Session Saved ✓</h2>
+    <p style="margin-bottom:16px">Your meeting transcript has been saved to History.</p>
+    <button class="btn btn-primary" id="download-session-btn" onclick="downloadLastSession()">Download Transcript (.txt)</button>
+    <button class="btn btn-ghost" style="margin-top:8px" onclick="closeSessionSaved()">Close</button>
+  </div>
+</div>
+
+<!-- ══ Toast ══ -->
+<div id="toast"></div>
+
+<script>
+// ════════════════════════════════════════════
+// CONSTANTS & STATE
+// ════════════════════════════════════════════
+const LS = {
+  PW_HASH:    'dc_pw_hash',
+  PW_SALT:    'dc_pw_salt',
+  DG_KEY:     'dc_dg_key',
+  AN_KEY:     'dc_an_key',
+  DOCS:       'dc_documents',
+  SESSIONS:   'dc_sessions',
+  INTERVAL:   'dc_interval',
+};
+
+const state = {
+  unlocked: false,
+  sessionKey: null,      // CryptoKey derived from password
+  docs: [],
+  sessions: [],
+  // meeting
+  micActive: false,
+  wsDeepgram: null,
+  mediaRecorder: null,
+  audioStream: null,
+  transcript: '',        // accumulated final transcript
+  recentChunks: [],      // [{text, ts}] last ~30s
+  analysisTimer: null,
+  meetingTimer: null,
+  meetingSeconds: 0,
+  currentSessionId: null,
+  autosaveTimer: null,
+  analysisInterval: 10,
+  analyzing: false,
+  lastGuidance: null,
+  wsReconnectCount: 0,
+};
+
+// ════════════════════════════════════════════
+// CRYPTO MODULE
+// ════════════════════════════════════════════
+const crypto = window.crypto;
+
+async function sha256(str) {
+  const buf = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+async function deriveKey(password, saltHex) {
+  const salt = hexToBytes(saltHex);
+  const raw = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' },
+    raw,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encrypt(key, plaintext) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext));
+  return bytesToHex(iv) + ':' + bytesToHex(new Uint8Array(enc));
+}
+
+async function decrypt(key, ciphertext) {
+  const [ivHex, dataHex] = ciphertext.split(':');
+  const dec = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: hexToBytes(ivHex) },
+    key,
+    hexToBytes(dataHex)
+  );
+  return new TextDecoder().decode(dec);
+}
+
+function hexToBytes(hex) {
+  const arr = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) arr[i/2] = parseInt(hex.slice(i, i+2), 16);
+  return arr;
+}
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// ════════════════════════════════════════════
+// AUTH MODULE
+// ════════════════════════════════════════════
+async function authSetup(password, dgKey, anthropicKey) {
+  if (!password || !dgKey || !anthropicKey) throw new Error('All fields required');
+  if (password.length < 6) throw new Error('Password must be at least 6 characters');
+
+  const salt = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
+  const hash = await sha256(password + salt);
+  const derivedKey = await deriveKey(password, salt);
+
+  localStorage.setItem(LS.PW_SALT, salt);
+  localStorage.setItem(LS.PW_HASH, hash);
+  localStorage.setItem(LS.DG_KEY,  await encrypt(derivedKey, dgKey));
+  localStorage.setItem(LS.AN_KEY,  await encrypt(derivedKey, anthropicKey));
+
+  state.sessionKey = derivedKey;
+  state.unlocked = true;
+}
+
+async function authLogin(password) {
+  const salt = localStorage.getItem(LS.PW_SALT);
+  const hash = localStorage.getItem(LS.PW_HASH);
+  if (!salt || !hash) return false;
+  const attempt = await sha256(password + salt);
+  if (attempt !== hash) return false;
+  state.sessionKey = await deriveKey(password, salt);
+  state.unlocked = true;
+  return true;
+}
+
+async function getApiKey(name) {
+  const stored = localStorage.getItem(name);
+  if (!stored || !state.sessionKey) return null;
+  try { return await decrypt(state.sessionKey, stored); } catch { return null; }
+}
+
+function hasSetup() {
+  return !!(localStorage.getItem(LS.PW_HASH) && localStorage.getItem(LS.DG_KEY));
+}
+
+// ════════════════════════════════════════════
+// DOCUMENTS MODULE
+// ════════════════════════════════════════════
+function docsLoad() {
+  try { state.docs = JSON.parse(localStorage.getItem(LS.DOCS) || '[]'); } catch { state.docs = []; }
+}
+function docsSave() {
+  localStorage.setItem(LS.DOCS, JSON.stringify(state.docs));
+}
+function docsAdd(name, content) {
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+  state.docs.push({ id, name, content, created: Date.now(), size: content.length });
+  docsSave();
+}
+function docsRemove(id) {
+  state.docs = state.docs.filter(d => d.id !== id);
+  docsSave();
+}
+function docsBuildContext() {
+  if (!state.docs.length) return '';
+  let ctx = '';
+  for (const d of state.docs) {
+    // Limit each doc to ~15k chars to stay within token budget
+    const excerpt = d.content.length > 15000 ? d.content.slice(0, 15000) + '\n[...truncated]' : d.content;
+    ctx += `\n\n=== ${d.name} ===\n${excerpt}`;
+  }
+  return ctx.trim();
+}
+
+// ════════════════════════════════════════════
+// FILE PARSER MODULE
+// ════════════════════════════════════════════
+async function parseFile(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.pdf'))  return parsePdf(file);
+  if (name.endsWith('.docx')) return parseDocx(file);
+  if (name.endsWith('.xlsx') || name.endsWith('.xls')) return parseXlsx(file);
+  if (name.endsWith('.pptx')) return parsePptx(file);
+  return parseText(file); // .md, .txt, and anything else
+}
+
+async function parsePdf(file) {
+  if (!window.pdfjsLib) throw new Error('PDF.js not loaded');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(s => s.str).join(' ') + '\n';
+  }
+  return text.trim();
+}
+
+async function parseDocx(file) {
+  if (!window.mammoth) throw new Error('Mammoth.js not loaded');
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return result.value.trim();
+}
+
+async function parseXlsx(file) {
+  if (!window.XLSX) throw new Error('SheetJS not loaded');
+  const arrayBuffer = await file.arrayBuffer();
+  const wb = XLSX.read(arrayBuffer, { type: 'array' });
+  let text = '';
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    text += `Sheet: ${sheetName}\n`;
+    text += XLSX.utils.sheet_to_csv(ws) + '\n\n';
+  }
+  return text.trim();
+}
+
+async function parsePptx(file) {
+  if (!window.JSZip) throw new Error('JSZip not loaded');
+  const arrayBuffer = await file.arrayBuffer();
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  const slideFiles = Object.keys(zip.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f)).sort();
+  let text = '';
+  for (const sf of slideFiles) {
+    const xml = await zip.files[sf].async('text');
+    // Extract text runs from XML
+    const runs = [...xml.matchAll(/<a:t[^>]*>([^<]*)<\/a:t>/g)].map(m => m[1]);
+    if (runs.length) text += runs.join(' ') + '\n';
+  }
+  return text.trim();
+}
+
+async function parseText(file) {
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = e => res(e.target.result || '');
+    reader.onerror = rej;
+    reader.readAsText(file);
+  });
+}
+
+// ════════════════════════════════════════════
+// SESSIONS MODULE
+// ════════════════════════════════════════════
+function sessionsLoad() {
+  try { state.sessions = JSON.parse(localStorage.getItem(LS.SESSIONS) || '[]'); } catch { state.sessions = []; }
+}
+function sessionsSave() {
+  localStorage.setItem(LS.SESSIONS, JSON.stringify(state.sessions));
+}
+function sessionStart() {
+  state.currentSessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+  state.transcript = '';
+  state.recentChunks = [];
+}
+function sessionAutosave() {
+  if (!state.currentSessionId || !state.transcript) return;
+  const existing = state.sessions.findIndex(s => s.id === state.currentSessionId);
+  const entry = {
+    id: state.currentSessionId,
+    date: Date.now(),
+    duration: state.meetingSeconds,
+    transcript: state.transcript,
+    wordCount: state.transcript.split(/\s+/).filter(Boolean).length,
+  };
+  if (existing >= 0) state.sessions[existing] = entry;
+  else state.sessions.unshift(entry);
+  if (state.sessions.length > 50) state.sessions = state.sessions.slice(0, 50);
+  sessionsSave();
+}
+function sessionExport(id) {
+  const s = state.sessions.find(x => x.id === id);
+  if (!s) return;
+  const d = new Date(s.date);
+  const header = `DocCoach Meeting Transcript\nDate: ${d.toLocaleDateString()} ${d.toLocaleTimeString()}\nDuration: ${formatTime(s.duration)}\nWords: ${s.wordCount}\n${'─'.repeat(40)}\n\n`;
+  const blob = new Blob([header + s.transcript], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `doccoach-${d.toISOString().slice(0,10)}.txt`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ════════════════════════════════════════════
+// AUDIO / DEEPGRAM MODULE
+// ════════════════════════════════════════════
+async function audioStart() {
+  const dgKey = await getApiKey(LS.DG_KEY);
+  if (!dgKey) { showToast('Missing Deepgram API key'); return false; }
+
+  try {
+    state.audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (e) {
+    if (e.name === 'NotAllowedError') {
+      showMicDenied();
+    } else {
+      showToast('Microphone error: ' + e.message);
+    }
+    return false;
+  }
+
+  state.wsReconnectCount = 0;
+  connectDeepgramWS(dgKey);
+  return true;
+}
+
+function connectDeepgramWS(dgKey) {
+  const url = 'wss://api.deepgram.com/v1/listen?encoding=webm-opus&interim_results=true&smart_format=true&punctuate=true';
+  state.wsDeepgram = new WebSocket(url, ['token', dgKey]);
+  state.wsDeepgram.binaryType = 'arraybuffer';
+
+  state.wsDeepgram.onopen = () => {
+    setConnStatus('connected', 'Listening');
+    startMediaRecorder();
+  };
+
+  state.wsDeepgram.onmessage = (evt) => {
+    try {
+      const data = JSON.parse(evt.data);
+      const alt = data?.channel?.alternatives?.[0];
+      if (!alt) return;
+      const text = alt.transcript || '';
+      const isFinal = data.is_final;
+      if (text) onTranscript(text, isFinal);
+    } catch {}
+  };
+
+  state.wsDeepgram.onerror = () => setConnStatus('error', 'Connection error');
+
+  state.wsDeepgram.onclose = () => {
+    if (state.micActive && state.wsReconnectCount < 3) {
+      state.wsReconnectCount++;
+      setConnStatus('error', `Reconnecting (${state.wsReconnectCount}/3)…`);
+      setTimeout(() => connectDeepgramWS(dgKey), 2000 * state.wsReconnectCount);
+    } else if (state.micActive) {
+      setConnStatus('error', 'Connection lost');
+      showToast('Lost connection to Deepgram — check network');
+    }
+  };
+}
+
+function startMediaRecorder() {
+  const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg']
+    .find(m => MediaRecorder.isTypeSupported(m)) || '';
+  const options = mimeType ? { mimeType } : {};
+  state.mediaRecorder = new MediaRecorder(state.audioStream, options);
+  state.mediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0 && state.wsDeepgram?.readyState === WebSocket.OPEN) {
+      state.wsDeepgram.send(e.data);
+    }
+  };
+  state.mediaRecorder.onerror = () => { showToast('Audio recording error'); };
+  state.mediaRecorder.start(250); // send chunks every 250ms
+}
+
+function onTranscript(text, isFinal) {
+  if (isFinal) {
+    state.transcript += (state.transcript ? ' ' : '') + text;
+    state.recentChunks.push({ text, ts: Date.now() });
+    // Keep only last 60 seconds of recent chunks
+    const cutoff = Date.now() - 60000;
+    state.recentChunks = state.recentChunks.filter(c => c.ts > cutoff);
+    renderTranscript(null);
+  } else {
+    renderTranscript(text);
+  }
+}
+
+function audioStop() {
+  if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
+    state.mediaRecorder.stop();
+  }
+  if (state.wsDeepgram) {
+    state.wsDeepgram.onclose = null; // prevent reconnect logic
+    state.wsDeepgram.close();
+    state.wsDeepgram = null;
+  }
+  if (state.audioStream) {
+    state.audioStream.getTracks().forEach(t => t.stop());
+    state.audioStream = null;
+  }
+}
+
+// ════════════════════════════════════════════
+// AI ANALYSIS MODULE
+// ════════════════════════════════════════════
+async function runAnalysis() {
+  if (state.analyzing) return;
+  if (!state.transcript && !state.recentChunks.length) return;
+  const anthropicKey = await getApiKey(LS.AN_KEY);
+  if (!anthropicKey) { showToast('Missing Anthropic API key'); return; }
+
+  state.analyzing = true;
+  setAnalysisStatus('Analyzing…');
+
+  const docsCtx = docsBuildContext();
+  const recent = state.recentChunks.map(c => c.text).join(' ');
+  const fullTx = state.transcript.length > 8000
+    ? '…' + state.transcript.slice(-8000)
+    : state.transcript;
+
+  const systemPrompt = `You are a real-time meeting coach. The user is in a live panel or sales meeting.
+They have uploaded these reference documents to guide their contributions:
+<documents>
+${docsCtx || '(no documents loaded)'}
+</documents>
+
+Your role: analyse the conversation and advise whether the user should speak or stay quiet.
+If they should speak, identify the most relevant points from their documents.
+
+Respond ONLY with valid JSON — no markdown, no explanation, just raw JSON:
+{
+  "action": "speak" or "quiet",
+  "reason": "one sentence (max 15 words) explaining why",
+  "keyPoints": ["concise point 1", "concise point 2"],
+  "suggestion": "optional short phrase they could actually say, or empty string"
+}`;
+
+  const userPrompt = `Full conversation so far:\n${fullTx || '(nothing yet)'}\n\nMost recent (last ~60s):\n${recent || '(nothing yet)'}\n\nShould I speak now? What from my documents is most relevant?`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 400,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`API ${resp.status}: ${err.slice(0,100)}`);
+    }
+
+    const data = await resp.json();
+    const rawText = data.content?.[0]?.text || '';
+    // Extract JSON from response (handle any stray whitespace)
+    const match = rawText.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('No JSON in response');
+    const guidance = JSON.parse(match[0]);
+    state.lastGuidance = guidance;
+    renderGuidance(guidance);
+    setAnalysisStatus('Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  } catch (e) {
+    setAnalysisStatus('Analysis error: ' + e.message.slice(0, 60));
+  } finally {
+    state.analyzing = false;
+  }
+}
+
+function startAnalysisLoop() {
+  stopAnalysisLoop();
+  const ms = (state.analysisInterval || 10) * 1000;
+  state.analysisTimer = setInterval(runAnalysis, ms);
+  // Run once immediately after a short delay
+  setTimeout(runAnalysis, 3000);
+}
+function stopAnalysisLoop() {
+  if (state.analysisTimer) { clearInterval(state.analysisTimer); state.analysisTimer = null; }
+}
+
+// ════════════════════════════════════════════
+// RENDER FUNCTIONS
+// ════════════════════════════════════════════
+function renderGuidance(g) {
+  const card = document.getElementById('guidance-card');
+  const action = document.getElementById('guidance-action');
+  const reason = document.getElementById('guidance-reason');
+  const points = document.getElementById('guidance-points');
+  const suggestion = document.getElementById('guidance-suggestion');
+
+  const isSpeak = g.action === 'speak';
+  card.className = isSpeak ? 'speak' : 'quiet';
+  action.className = isSpeak ? 'guidance-action-speak' : 'guidance-action-quiet';
+  action.textContent = isSpeak ? '💬 SPEAK NOW' : '🔴 STAY QUIET';
+  reason.textContent = g.reason || '';
+
+  points.innerHTML = '';
+  (g.keyPoints || []).slice(0, 3).forEach(pt => {
+    const li = document.createElement('li');
+    li.textContent = pt;
+    points.appendChild(li);
+  });
+
+  if (g.suggestion && g.suggestion.trim()) {
+    suggestion.textContent = '"' + g.suggestion.trim() + '"';
+    suggestion.style.display = 'block';
+  } else {
+    suggestion.style.display = 'none';
+  }
+}
+
+function renderTranscript(interim) {
+  // Show last 1000 chars of final transcript
+  const display = state.transcript.length > 1000
+    ? '…' + state.transcript.slice(-1000)
+    : state.transcript;
+  document.getElementById('transcript-text').textContent = display;
+  document.getElementById('transcript-interim').textContent = interim ? ' ' + interim : '';
+  const wrap = document.getElementById('transcript-wrap');
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function renderDocsList() {
+  const list = document.getElementById('docs-list');
+  const empty = document.getElementById('no-docs-msg');
+  list.innerHTML = '';
+  if (!state.docs.length) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  state.docs.forEach(d => {
+    const ext = (d.name.match(/\.(\w+)$/) || [])[1] || 'txt';
+    const icons = { pdf:'📕', docx:'📘', doc:'📘', xlsx:'📗', xls:'📗', pptx:'📙', ppt:'📙', md:'📓' };
+    const icon = icons[ext.toLowerCase()] || '📄';
+    const size = d.size > 1000 ? Math.round(d.size/1000) + 'k chars' : d.size + ' chars';
+    const el = document.createElement('div');
+    el.className = 'doc-item';
+    el.innerHTML = `
+      <div class="doc-icon">${icon}</div>
+      <div class="doc-info">
+        <div class="doc-name">${escHtml(d.name)}</div>
+        <div class="doc-meta">${size} · ${new Date(d.created).toLocaleDateString()}</div>
+      </div>
+      <button class="doc-del" onclick="deleteDoc('${d.id}')" title="Remove">✕</button>`;
+    list.appendChild(el);
+  });
+}
+
+function renderSessionsList() {
+  const list = document.getElementById('sessions-list');
+  const empty = document.getElementById('no-sessions-msg');
+  list.innerHTML = '';
+  if (!state.sessions.length) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  state.sessions.forEach(s => {
+    const d = new Date(s.date);
+    const el = document.createElement('div');
+    el.className = 'session-item';
+    el.innerHTML = `
+      <div class="session-header">
+        <div class="session-date">${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div>
+        <div class="session-actions">
+          <button class="btn btn-ghost btn-sm" onclick="sessionExport('${s.id}')">⬇ .txt</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteSession('${s.id}')">✕</button>
+        </div>
+      </div>
+      <div class="session-meta">${formatTime(s.duration)} · ${s.wordCount || 0} words</div>`;
+    list.appendChild(el);
+  });
+}
+
+// ════════════════════════════════════════════
+// MEETING CONTROL
+// ════════════════════════════════════════════
+async function toggleMic() {
+  if (!state.micActive) {
+    // Check docs
+    if (!state.docs.length) {
+      document.getElementById('meeting-doc-warning').style.display = 'block';
+      showToast('Add documents before starting');
+      return;
+    }
+    document.getElementById('meeting-doc-warning').style.display = 'none';
+
+    const ok = await audioStart();
+    if (!ok) return;
+
+    state.micActive = true;
+    sessionStart();
+    startMeetingTimer();
+    startAnalysisLoop();
+
+    // Autosave every 10s
+    state.autosaveTimer = setInterval(sessionAutosave, 10000);
+
+    document.getElementById('mic-btn').classList.add('active');
+    document.getElementById('mic-btn').textContent = '⏹';
+    document.getElementById('mic-label').textContent = 'Listening… tap to stop';
+  } else {
+    stopMeeting();
+  }
+}
+
+function stopMeeting() {
+  state.micActive = false;
+  audioStop();
+  stopAnalysisLoop();
+  stopMeetingTimer();
+  if (state.autosaveTimer) { clearInterval(state.autosaveTimer); state.autosaveTimer = null; }
+
+  // Final save
+  sessionAutosave();
+
+  document.getElementById('mic-btn').classList.remove('active');
+  document.getElementById('mic-btn').textContent = '🎤';
+  document.getElementById('mic-label').textContent = 'Tap to listen';
+  setConnStatus('', 'Ready');
+
+  if (state.transcript && state.transcript.trim()) {
+    document.getElementById('session-saved-modal').classList.add('open');
+  }
+}
+
+function startMeetingTimer() {
+  state.meetingSeconds = 0;
+  updateTimerDisplay();
+  state.meetingTimer = setInterval(() => {
+    state.meetingSeconds++;
+    updateTimerDisplay();
+  }, 1000);
+}
+function stopMeetingTimer() {
+  if (state.meetingTimer) { clearInterval(state.meetingTimer); state.meetingTimer = null; }
+}
+function updateTimerDisplay() {
+  document.getElementById('meeting-timer').textContent = formatTime(state.meetingSeconds);
+}
+function formatTime(s) {
+  const m = Math.floor(s / 60), sec = s % 60;
+  return String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0');
+}
+function updateInterval() {
+  state.analysisInterval = parseInt(document.getElementById('interval-select').value, 10);
+  localStorage.setItem(LS.INTERVAL, state.analysisInterval);
+  if (state.micActive) startAnalysisLoop();
+}
+
+// ════════════════════════════════════════════
+// UI HELPERS
+// ════════════════════════════════════════════
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-' + id).classList.add('active');
+}
+
+function navigate(page) {
+  showView(page);
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('nav-' + page)?.classList.add('active');
+  if (page === 'documents') renderDocsList();
+  if (page === 'history') { sessionsLoad(); renderSessionsList(); }
+}
+
+function showNav() { document.getElementById('bottom-nav').classList.add('visible'); }
+function hideNav() { document.getElementById('bottom-nav').classList.remove('visible'); }
+
+function setConnStatus(type, label) {
+  const el = document.getElementById('conn-status');
+  el.className = 'status-pill' + (type ? ' ' + type : '');
+  el.innerHTML = `<span class="dot"></span>${label}`;
+}
+function setAnalysisStatus(msg) {
+  document.getElementById('analysis-status').textContent = msg;
+}
+
+function showToast(msg, duration = 2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => { t.style.display = 'none'; }, duration);
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function showMicDenied() {
+  showToast('Microphone access denied — check Settings → Safari → Microphone', 5000);
+}
+
+// ════════════════════════════════════════════
+// DOCUMENT MANAGEMENT HANDLERS
+// ════════════════════════════════════════════
+let _parsedFileContent = null;
+let _parseSpinner = null;
+
+function openAddDocModal() {
+  _parsedFileContent = null;
+  document.getElementById('add-doc-name').value = '';
+  document.getElementById('add-doc-text').value = '';
+  document.getElementById('upload-label-text').textContent = 'Tap to upload PDF, DOCX, PPTX, XLSX, MD, TXT';
+  document.getElementById('add-doc-error').style.display = 'none';
+  document.getElementById('file-input').value = '';
+  document.getElementById('add-doc-modal').classList.add('open');
+}
+function closeAddDocModal() {
+  document.getElementById('add-doc-modal').classList.remove('open');
+}
+function handleModalClick(e) {
+  if (e.target.id === 'add-doc-modal') closeAddDocModal();
+}
+
+async function handleFileSelect(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const labelText = document.getElementById('upload-label-text');
+  labelText.innerHTML = '<span class="spinner"></span> Parsing…';
+  document.getElementById('add-doc-error').style.display = 'none';
+  try {
+    _parsedFileContent = await parseFile(file);
+    // Auto-fill name from filename (without extension)
+    if (!document.getElementById('add-doc-name').value) {
+      document.getElementById('add-doc-name').value = file.name.replace(/\.[^.]+$/, '');
+    }
+    labelText.textContent = '✓ ' + file.name + ' (' + Math.round(_parsedFileContent.length / 1000) + 'k chars)';
+  } catch (e) {
+    _parsedFileContent = null;
+    labelText.textContent = 'Tap to upload PDF, DOCX, PPTX, XLSX, MD, TXT';
+    const errEl = document.getElementById('add-doc-error');
+    errEl.textContent = 'Parse error: ' + e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+function saveDocument() {
+  const name = document.getElementById('add-doc-name').value.trim();
+  const pasted = document.getElementById('add-doc-text').value.trim();
+  const content = _parsedFileContent || pasted;
+  const errEl = document.getElementById('add-doc-error');
+
+  if (!name) { errEl.textContent = 'Enter a document name'; errEl.style.display = 'block'; return; }
+  if (!content) { errEl.textContent = 'Upload a file or paste text'; errEl.style.display = 'block'; return; }
+
+  docsAdd(name, content);
+  closeAddDocModal();
+  renderDocsList();
+  showToast('Document added');
+}
+
+function deleteDoc(id) {
+  docsRemove(id);
+  renderDocsList();
+  showToast('Document removed');
+}
+
+function deleteSession(id) {
+  state.sessions = state.sessions.filter(s => s.id !== id);
+  sessionsSave();
+  renderSessionsList();
+}
+
+function clearSessions() {
+  state.sessions = [];
+  sessionsSave();
+  renderSessionsList();
+  closeSettings();
+  showToast('All transcripts cleared');
+}
+
+// ════════════════════════════════════════════
+// SETTINGS
+// ════════════════════════════════════════════
+function openSettings() { document.getElementById('settings-modal').classList.add('open'); }
+function closeSettings() { document.getElementById('settings-modal').classList.remove('open'); }
+function handleSettingsModalClick(e) { if (e.target.id === 'settings-modal') closeSettings(); }
+
+function showResetConfirm() {
+  if (!confirm('This will erase ALL data including documents, transcripts, and API keys. Continue?')) return;
+  localStorage.clear();
+  location.reload();
+}
+
+function showUpdateKeys() { document.getElementById('update-keys-modal').classList.add('open'); }
+function closeUpdateKeys() { document.getElementById('update-keys-modal').classList.remove('open'); }
+function handleUpdateKeysClick(e) { if (e.target.id === 'update-keys-modal') closeUpdateKeys(); }
+
+async function saveUpdatedKeys() {
+  const pw = document.getElementById('uk-password').value;
+  const dg = document.getElementById('uk-deepgram').value.trim();
+  const an = document.getElementById('uk-anthropic').value.trim();
+  const errEl = document.getElementById('uk-error');
+
+  const ok = await authLogin(pw);
+  if (!ok) { errEl.textContent = 'Incorrect password'; errEl.style.display = 'block'; return; }
+
+  try {
+    if (dg) localStorage.setItem(LS.DG_KEY, await encrypt(state.sessionKey, dg));
+    if (an) localStorage.setItem(LS.AN_KEY, await encrypt(state.sessionKey, an));
+    closeUpdateKeys();
+    showToast('API keys updated');
+  } catch (e) {
+    errEl.textContent = 'Error: ' + e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+// ════════════════════════════════════════════
+// SESSION SAVED MODAL
+// ════════════════════════════════════════════
+function closeSessionSaved() { document.getElementById('session-saved-modal').classList.remove('open'); }
+function downloadLastSession() {
+  if (state.currentSessionId) sessionExport(state.currentSessionId);
+  closeSessionSaved();
+}
+
+// ════════════════════════════════════════════
+// SETUP & LOGIN HANDLERS
+// ════════════════════════════════════════════
+async function handleSetup() {
+  const pw  = document.getElementById('setup-password').value;
+  const dg  = document.getElementById('setup-deepgram').value.trim();
+  const an  = document.getElementById('setup-anthropic').value.trim();
+  const btn = document.getElementById('setup-btn');
+  const err = document.getElementById('setup-error');
+  err.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Setting up…';
+  try {
+    await authSetup(pw, dg, an);
+    afterLogin();
+  } catch (e) {
+    err.textContent = e.message; err.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Get Started';
+  }
+}
+
+async function handleLogin() {
+  const pw  = document.getElementById('login-password').value;
+  const err = document.getElementById('login-error');
+  err.style.display = 'none';
+  const ok = await authLogin(pw);
+  if (!ok) { err.style.display = 'block'; return; }
+  afterLogin();
+}
+
+function afterLogin() {
+  docsLoad();
+  sessionsLoad();
+  const iv = parseInt(localStorage.getItem(LS.INTERVAL) || '10', 10);
+  state.analysisInterval = iv;
+  document.getElementById('interval-select').value = String(iv);
+  showNav();
+  navigate('meeting');
+}
+
+// ════════════════════════════════════════════
+// BOOT
+// ════════════════════════════════════════════
+(function boot() {
+  if (!hasSetup()) {
+    showView('setup');
+  } else {
+    showView('login');
+    // Auto-focus password field
+    setTimeout(() => document.getElementById('login-password').focus(), 100);
+  }
+})();
+</script>
+</body>
+</html>
