@@ -552,8 +552,9 @@
         <span>🔍 Connection log</span><span id="debug-chevron">▸</span>
       </button>
       <div id="debug-log">
-        <div style="padding:6px 0;border-bottom:1px solid #1a1a1a">
-          <button class="btn btn-ghost btn-sm" style="width:100%;margin-bottom:4px" onclick="testDeepgramKey()">🔑 Test Deepgram API Key (REST)</button>
+        <div style="padding:6px 0;border-bottom:1px solid #1a1a1a;display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" style="flex:1" onclick="runDiagnostics()">🔍 Run Diagnostics</button>
+          <button class="btn btn-ghost btn-sm" style="flex:1" onclick="testDeepgramKey()">🔑 Test Key</button>
         </div>
       </div>
     </div>
@@ -711,6 +712,63 @@ function toggleDebug() {
   if (open) log.scrollTop = log.scrollHeight;
 }
 
+// ── Full network diagnostics ──────────────────────────────────────────────────
+async function runDiagnostics() {
+  // Open log panel
+  document.getElementById('debug-log').classList.add('open');
+  document.getElementById('debug-chevron').textContent = '▾';
+
+  dbg('=== Running diagnostics ===', 'info');
+
+  // 1. Web Speech API availability
+  const hasSpeechAPI = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  dbg(`Web Speech API: ${hasSpeechAPI ? '✓ available' : '✗ not available'}`, hasSpeechAPI ? 'ok' : 'warn');
+
+  // 2. MediaRecorder availability
+  const hasMR = !!window.MediaRecorder;
+  dbg(`MediaRecorder: ${hasMR ? '✓ available' : '✗ not available'}`, hasMR ? 'ok' : 'error');
+  if (hasMR) {
+    const fmt = detectAudioMime();
+    dbg(`  Best audio format: ${fmt.mime || 'browser default'}`, 'info');
+  }
+
+  // 3. Basic HTTPS connectivity (use a reliable CORS-friendly endpoint)
+  dbg('Testing network reach to api.deepgram.com…', 'info');
+  try {
+    const r = await fetch('https://api.deepgram.com/', { method: 'HEAD', mode: 'no-cors' });
+    dbg('Deepgram host reachable ✓ (no-cors ping succeeded)', 'ok');
+  } catch (e) {
+    dbg(`Deepgram host UNREACHABLE: ${e.message}`, 'error');
+    dbg('→ Network is blocking api.deepgram.com. Try a different WiFi/cellular.', 'warn');
+  }
+
+  // 4. WebSocket to public echo server (proves WS is allowed on this network)
+  dbg('Testing WebSocket (public echo server)…', 'info');
+  await new Promise(resolve => {
+    const ws = new WebSocket('wss://echo.websocket.events');
+    const t = setTimeout(() => { ws.close(); dbg('WS echo: timeout (>5s)', 'warn'); resolve(); }, 5000);
+    ws.onopen = () => {
+      dbg('WebSocket to echo server: ✓ WORKS', 'ok');
+      ws.send('ping'); // verify send works
+    };
+    ws.onmessage = (e) => {
+      dbg(`Echo reply: "${e.data}" — WS send/receive both work ✓`, 'ok');
+      clearTimeout(t); ws.close(); resolve();
+    };
+    ws.onerror = () => { dbg('WS echo: error', 'error'); };
+    ws.onclose = (e) => {
+      if (e.code !== 1000) {
+        dbg(`WS echo closed: code=${e.code} — WebSockets may be blocked on this network`, 'error');
+        clearTimeout(t); resolve();
+      }
+    };
+  });
+
+  // 5. Test key
+  await testDeepgramKey();
+  dbg('=== Diagnostics complete ===', 'info');
+}
+
 // Test Deepgram key via REST (same as curl -H "Authorization: Token KEY")
 // This bypasses all WebSocket complexity and tells us if the key itself is valid.
 async function testDeepgramKey() {
@@ -766,6 +824,8 @@ const state = {
   wsDeepgram: null,
   wsKeepalive: null,
   audioFormat: null,
+  speechRec: null,
+  forceDeepgram: false,
   _firstMsgLogged: false,
   mediaRecorder: null,
   audioStream: null,
@@ -1033,15 +1093,24 @@ function detectAudioMime() {
 async function audioStart() {
   dbg(`Page origin: ${window.location.origin}`, 'info');
 
+  // ── Try Web Speech API first (no API key needed, works on Chrome/desktop) ──
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRec && !state.forceDeepgram) {
+    dbg('Web Speech API available — trying it first (no Deepgram key needed)', 'info');
+    const ok = await audioStartWebSpeech(SpeechRec);
+    if (ok) return true;
+    dbg('Web Speech API failed — falling back to Deepgram', 'warn');
+  }
+
+  // ── Deepgram WebSocket fallback ───────────────────────────────────────────
   const dgKey = await getApiKey(LS.DG_KEY);
   if (!dgKey) {
-    dbg('CRITICAL: getApiKey returned null — key missing or decrypt failed', 'error');
-    showToast('Missing Deepgram API key — check Settings');
+    dbg('No Deepgram key — run diagnostics or add key in Settings', 'error');
+    showToast('No Deepgram API key. Add it in Settings or use Chrome for Web Speech.');
     return false;
   }
-  // Trim whitespace that may have been copied with the key
   const key = dgKey.trim();
-  dbg(`Deepgram key retrieved: ${key.length} chars, starts "${key.slice(0,4)}…"`, 'info');
+  dbg(`Deepgram key: ${key.length} chars, starts "${key.slice(0,4)}…"`, 'info');
 
   dbg('Requesting microphone…', 'info');
   try {
@@ -1049,19 +1118,63 @@ async function audioStart() {
     dbg('Microphone granted ✓', 'ok');
   } catch (e) {
     dbg(`Mic error: ${e.name} — ${e.message}`, 'error');
-    if (e.name === 'NotAllowedError') {
-      showMicDenied();
-    } else {
-      showToast('Microphone error: ' + e.message);
-    }
+    if (e.name === 'NotAllowedError') showMicDenied();
+    else showToast('Microphone error: ' + e.message);
     return false;
   }
 
   state.audioFormat = detectAudioMime();
   dbg(`Audio MIME: "${state.audioFormat.mime || 'default'}" → DG encoding: ${state.audioFormat.encoding || 'auto-detect'}`, 'info');
   state.wsReconnectCount = 0;
-  connectDeepgramWS(key);  // pass trimmed key
+  connectDeepgramWS(key);
   return true;
+}
+
+// ── Web Speech API path (Chrome, Edge, Android) ───────────────────────────────
+async function audioStartWebSpeech(SpeechRec) {
+  return new Promise(resolve => {
+    try {
+      const sr = new SpeechRec();
+      sr.continuous = true;
+      sr.interimResults = true;
+      sr.lang = 'en-US';
+
+      sr.onstart = () => {
+        dbg('Web Speech API listening ✓', 'ok');
+        setConnStatus('connected', 'Listening (Web Speech)');
+        state.speechRec = sr;
+        resolve(true);
+      };
+      sr.onresult = (e) => {
+        let interim = '', final = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) final += t;
+          else interim += t;
+        }
+        if (final) onTranscript(final.trim(), true);
+        else if (interim) renderTranscript(interim);
+      };
+      sr.onerror = (e) => {
+        dbg(`Web Speech error: ${e.error}`, 'error');
+        if (e.error === 'not-allowed') { showMicDenied(); resolve(false); }
+        else if (e.error === 'no-speech' || e.error === 'audio-capture') {
+          // Restart on transient errors
+          try { sr.start(); } catch {}
+        } else { resolve(false); }
+      };
+      sr.onend = () => {
+        // Auto-restart if still active
+        if (state.micActive && state.speechRec === sr) {
+          try { sr.start(); } catch {}
+        }
+      };
+      sr.start();
+    } catch (e) {
+      dbg(`Web Speech init error: ${e.message}`, 'error');
+      resolve(false);
+    }
+  });
 }
 
 function connectDeepgramWS(dgKey) {
@@ -1185,6 +1298,11 @@ function onTranscript(text, isFinal) {
 }
 
 function audioStop() {
+  // Stop Web Speech API if active
+  if (state.speechRec) {
+    try { state.speechRec.stop(); } catch {}
+    state.speechRec = null;
+  }
   stopWsKeepalive();
   if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
     state.mediaRecorder.stop();
